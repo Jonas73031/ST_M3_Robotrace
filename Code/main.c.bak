@@ -1,0 +1,2069 @@
+/*----------------------�禡�w�ŧi-------------------------*/
+#include "stm32f10x.h"
+#include "math.h"
+
+/*----------------------�\��w�q�ŧi-----------------------*/
+ErrorStatus HSEStartUpStatus;
+NVIC_InitTypeDef NVIC_InitStructure;
+GPIO_InitTypeDef GPIO_InitStructure;
+TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
+TIM_OCInitTypeDef  TIM_OCInitStructure;
+ADC_InitTypeDef ADC_InitStructure;
+USART_InitTypeDef USART_InitStructure;
+
+/*----------------------�w�q-------------------------------*/
+#define IR_0 0
+#define IR_1 1
+#define IR_2 2
+#define IR_3 3
+#define IR_4 4
+#define IR_5 5
+
+#define Y_MAX 4095
+#define Y_MIN 0
+
+#define Pi 3.1415926535897932384626433832795
+#define Light_Ring 512
+#define Resolve 4
+#define	Gear 3
+#define Round_Pules (Light_Ring*Resolve*Gear)
+#define Wheel 27.2
+#define Width 83.9
+#define Long 90.0
+#define Wheel_Perimeter (Wheel*Pi)
+#define mm_pulse (Round_Pules/Wheel_Perimeter)
+#define pulse_mm (Wheel_Perimeter/Round_Pules)
+
+#define SAFE_TIME 250
+#define Parking_Distance 500
+#define S_Distance 100
+
+#define Vmax 4.6 //3.495
+#define Vmin 1.5
+#define Amax 0.029
+#define Amin 0.01 
+
+#define L_Point IR_ADC_A[IR_0]
+#define R_Point IR_ADC_A[IR_5]
+
+#define Do 523
+#define Re 587
+#define Mi 659
+#define Fa 698
+#define So 784
+#define La 880
+#define Si 988
+
+#define IR_Address 0x0807D000
+#define MAP_D_Address	0x0807D800
+#define MAP_R_Address 0x0807E000
+#define MAP_Mark_Address	0x0807E800
+/*----------------------�Ƶ{���ŧi-------------------------*/
+//�򥻥\��
+void Init_RCC(void);
+void Init_NVIC(void);
+void Init_GPIO(void);
+void Init_Systick(void);
+void Init_TIMER2(void);
+void Init_UART(void);
+void Uart_Num(unsigned long Value);
+void Uart_Sent(unsigned long num);
+void Init_ADC(void);
+void Init_BUZZER(void);
+void BUZZER(void);
+void Init_PWM(void);
+void MOTOR_Control(void);
+void Init_QEI(void);
+void Encoder(void);
+void Init_M_PWM(void);
+void Wind_MOTER(int Value);
+//�M��
+void Clear(void);
+//���
+void Choose(void);
+void Menu(void);
+void Index(void);
+//���~�u
+void Catch_ADC(void);
+void Aegulate_ADC(void);
+void Power_weight(void);
+//���ʦ^��
+void Move(void);
+//���FPID�R�O&&����
+void IR_PD_Control(void);
+void Vc_Command(void);
+void Vc_PD_Control(void);
+void W_Command(void);
+void W_PD_Control(void);
+//�O�@&&���p�P�_
+void Safe(void);
+void Cross(void);
+void Start_Direction(void);
+//�`�u
+void Search_MAP_Point(void);
+void Search_End_Point(void);
+void Search(float Wind_Speed,float KP,float KD,float V);
+//�Ĩ�
+void Sprint_Support_Point(void);
+void Sprint_End_Point(void);
+void Sprint(float Wind_Speed,float KP,float KD,float BF,float R10,float R15,float R20,float R25,float R30,float R35,float R40,float R50,float R60,float R70,float R80,float R90,float R100,float R200,float R300,float R500);
+
+/*----------------------�ܼƫŧi---------------------------*/
+//ADC
+float IR_ADC[6];
+float IR_ADC_F[6];
+float IR_ADC_MAX[6]={0,0,0,0,0,0};
+float IR_ADC_MIN[6]={4095,4095,4095,4095,4095,4095};
+float IR_ADC_A[6];
+//BUZZER
+int Buzzer_F=1,Buzzer_Time;
+//PWM
+int PWM_L,PWM_R;
+//ENCODER
+long E_L_V,E_L,E_L_now,E_L_last;
+long E_R_V,E_R,E_R_now,E_R_last;
+long MAP_E_R,MAP_E_L;
+//Wind_PWM
+int PWM_M;
+//���
+int Choose_L,Choose_R;
+int Menu_F;
+//�@��
+int mode;
+int time;
+//���~�u��ȺX��
+int ADC_Save_F;
+//�v��
+float Deviation;
+float Deviation_F;
+int	HOLD;
+//UART
+int Uart_up;
+float UART_1[1500];
+float UART_2[1500];
+float UART_3[1500];
+float UART_4[1500];
+//���ʦ^��
+float V_encoder,D_encoder,W_encoder,Sita_encoder;
+float Map_D,Map_D_Mark,Map_R,Map_R_Max,Start_D;
+float Map_R_Old[50];
+long Sprint_D_encoder;
+//IR���F����
+float Center=0.0;
+float IR_encoder_p,IR_late_x,IR_encoder_d;
+float IR_KP,IR_KD;
+float IR_PD_Command;
+float IR_PD;
+//Vc�R�O
+float Vc,Vn,Acc_add= 0.012,A=0.012;
+float A_Change;
+float D_Command;
+//Vc���F����
+float Vc_encoder_p,Vc_late_x,Vc_encoder_d;
+float Vc_KP=0.6,Vc_KD=85.0;
+float Vc_PD_Command;
+//W�R�O
+float Ws,Wn;
+float Sita_Command;
+//W���F����
+float W_encoder_p,W_late_x,W_encoder_d;
+float W_KP=0.7,W_KD=50.0;
+float W_PD_Command;
+//�O�@
+int Safer_F=0;
+int Safer_time;
+//���a��T
+int MAP_Mark,RUN_Mark;
+int	MAP_f,RUN_f,S_f;
+float S_D;
+long MAP_D[500];
+long MAP_R[500];
+//�P�_��V�X��
+int Direction_f;
+int Direction_L;
+int Direction_R;
+//�M�u&&�Ĩ�
+float End_D;
+long DE0,DE1,DE2,DE3,DE4;
+int Array;
+int Early_down_f;
+int Delay_up_f;
+float Sprint_speed;
+float Sprint_Array[500];
+//�u��
+float Cut_down_D;
+float Optimization_speed;
+int Optimization_Start;
+int Optimization_f;
+//����&&�s��
+int count=0;
+u32 Flash_WriteValue;
+int Array_up;
+long Total_D[500];
+
+/*----------------------�D�{��-----------------------------*/
+int main(void)
+{
+	Init_RCC();
+	Init_NVIC();
+	Init_GPIO();
+	Init_PWM();
+	Init_M_PWM();
+	Init_Systick();
+	Init_ADC();
+	Init_TIMER2();
+	Init_UART();
+	Init_BUZZER();
+	Init_QEI();
+	
+	//FlashŪ�����~�u�ƭ�
+	for(count=0;count<=5;count++)
+	{
+		IR_ADC_MAX[count]=*(u16 *)(IR_Address + 2 + count*4);
+		IR_ADC_MIN[count]=*(u16 *)(IR_Address + count*4);
+	}
+
+	//FlashŪ���`�I��
+	MAP_Mark=*(u16 *)(MAP_Mark_Address);
+	
+	//FlashŪ�����a��T
+	for(count=0;count<500;count++)
+	{
+		MAP_R[count]=*(u16 *)(MAP_R_Address + count*2);
+		MAP_D[count]=*(u16 *)(MAP_D_Address + count*2);
+		Total_D[count]=Total_D[count-1]+MAP_D[count];
+	}
+	
+	//����RGB	
+	GPIO_SetBits(GPIOB,GPIO_Pin_0 | GPIO_Pin_1 | GPIO_Pin_5);	//L_G,L_B,R_B
+	GPIO_SetBits(GPIOC,GPIO_Pin_5 | GPIO_Pin_12);							//L_R,R_R
+	GPIO_SetBits(GPIOD,GPIO_Pin_2);														//R_G
+	
+	
+	while(1)
+	{
+		Menu();
+	}
+}
+
+/*----------------------���-------------------------------*/
+void Menu(void)
+{
+	//***************************�}���i���*********************************//
+	if(Menu_F==0)
+	{
+		Choose();
+	}
+	//***************************�P�_����{��*******************************//
+	else if(Menu_F==1)
+	{
+		if(IR_ADC[0]>=2000 && IR_ADC[5]>=2000)
+		{
+			Buzzer_F=1;
+			GPIO_SetBits(GPIOB,GPIO_Pin_0 | GPIO_Pin_1 | GPIO_Pin_5);		//L_G,L_B,R_B
+			GPIO_SetBits(GPIOC,GPIO_Pin_5 | GPIO_Pin_12);								//L_R,R_R
+			GPIO_SetBits(GPIOD,GPIO_Pin_2);															//R_G
+			Clear();
+			if(Choose_R==1&&Choose_L==1)
+			{
+				Menu_F=2;
+			}
+			else
+			{
+				Menu_F=3;
+			}
+			if(Choose_R==5&&Choose_L==6)
+			{
+				Menu_F=4;
+			}
+		}
+	}
+	//***************************�s�J���~�u�̰��̧C��***********************//
+	else if(Menu_F==2)
+	{
+		if(((E_R+E_L)/2) <= (-1000))
+		{
+			//---------------EEPROM�M���}�C���--------------//		
+			FLASH_Unlock();
+			
+			FLASH_ClearFlag(FLASH_FLAG_BSY | FLASH_FLAG_EOP | FLASH_FLAG_PGERR | FLASH_FLAG_WRPRTERR);
+			
+			FLASH_ErasePage(IR_Address);
+			
+			count=0;
+			
+			while(count<=5)
+			{
+				Flash_WriteValue=(((int)IR_ADC_MAX[count]<<16)+((int)IR_ADC_MIN[count]));
+				if(FLASH_ProgramWord(IR_Address+count*4,Flash_WriteValue)==FLASH_COMPLETE)
+				{
+					count++;
+				}
+			}
+			
+			FLASH_Lock();																									//Flash�W��
+			
+			Flash_WriteValue=0;
+			
+			Buzzer_F=1;
+			Clear();
+			mode=0;
+			Menu_F=0;
+		}
+	}
+	//***********************UART�ǰe���a��T&���~�u��**********************//
+	else if(Menu_F==4)
+	{
+		if(Uart_up<=MAP_Mark)
+		{
+			Uart_Num(Uart_up);
+			Uart_Num(MAP_R[Uart_up]);
+			Uart_Num(MAP_D[Uart_up]);
+			Uart_Num(Total_D[Uart_up]);
+			Uart_Num(Sprint_Array[Uart_up]*100);
+			Uart_Sent('\n');
+
+			Uart_up++;
+		}
+		else
+		{
+			Uart_Num(IR_ADC_MAX[IR_0]);
+			Uart_Num(IR_ADC_MAX[IR_1]);
+			Uart_Num(IR_ADC_MAX[IR_2]);
+			Uart_Num(IR_ADC_MAX[IR_3]);
+			Uart_Num(IR_ADC_MAX[IR_4]);
+			Uart_Num(IR_ADC_MAX[IR_5]);
+			Uart_Sent('\n');
+			Uart_Num(IR_ADC_MIN[IR_0]);
+			Uart_Num(IR_ADC_MIN[IR_1]);
+			Uart_Num(IR_ADC_MIN[IR_2]);
+			Uart_Num(IR_ADC_MIN[IR_3]);
+			Uart_Num(IR_ADC_MIN[IR_4]);
+			Uart_Num(IR_ADC_MIN[IR_5]);
+			Uart_Sent('\n');
+			
+			Uart_up=0;
+			Menu_F=0;
+		}
+	}
+	//***************************�`�u�����q�����t***************************//
+	else if(Menu_F==5)
+	{
+		//�`�I��
+		FLASH_Unlock();						 																		//Flash����
+		
+		FLASH_ClearFlag(FLASH_FLAG_BSY | FLASH_FLAG_EOP | FLASH_FLAG_PGERR | FLASH_FLAG_WRPRTERR);
+		
+		FLASH_ErasePage(MAP_Mark_Address);
+		
+		while(FLASH_ProgramWord(MAP_Mark_Address, MAP_Mark)!=FLASH_COMPLETE);
+		
+		FLASH_Lock();																									//Flash�W��
+		
+		//�Z��
+		FLASH_Unlock();						 																		//Flash����
+		
+		FLASH_ClearFlag(FLASH_FLAG_BSY | FLASH_FLAG_EOP | FLASH_FLAG_PGERR | FLASH_FLAG_WRPRTERR);
+		
+		FLASH_ErasePage(MAP_D_Address);
+		
+		Array_up=0;
+		
+		while(Array_up<=MAP_Mark)
+		{
+			if(FLASH_ProgramHalfWord(MAP_D_Address+Array_up*2,MAP_D[Array_up])==FLASH_COMPLETE)
+			{
+				Array_up++;
+			}
+		}
+		
+		FLASH_Lock();																									//Flash�W��
+		
+		//�b�|
+		FLASH_Unlock();						 																		//Flash����
+		
+		FLASH_ClearFlag(FLASH_FLAG_BSY | FLASH_FLAG_EOP | FLASH_FLAG_PGERR | FLASH_FLAG_WRPRTERR);
+		
+		FLASH_ErasePage(MAP_R_Address);
+		
+		Array_up=0;
+		
+		while(Array_up<=MAP_Mark)
+		{
+			if(FLASH_ProgramHalfWord(MAP_R_Address+Array_up*2,MAP_R[Array_up])==FLASH_COMPLETE)
+			{
+				Array_up++;
+			}
+		}
+		
+		FLASH_Lock();																									//Flash�W��
+		
+		Menu_F=0;
+	}
+}
+
+/*----------------------�ؿ�-------------------------------*/
+void Index(void)
+{
+	//***************************�����~�u��*********************************//
+	if(Choose_R==1)
+	{
+		if(Choose_L==1)
+		{
+			Catch_ADC();
+		}
+	}
+	//***************************循跡***************************************//
+	else if(Choose_R==2)
+	{
+		if(Choose_L==1)
+		{
+			Search(35.0,2.0,1.8,1.5);
+		}
+		else if(Choose_L==2)
+		{
+			Search(35.0,2.8,3.0,1.6);
+		}
+		else if(Choose_L==3)
+		{
+			Search(40.0,3.2,3.0,1.7);
+		}
+		else if(Choose_L==4)
+		{
+			Search(42.0,3.6,3.0,1.8);
+		}
+		else if(Choose_L==5)
+		{
+			Search(42.0,3.6,3.0,1.9);
+		}
+		else if(Choose_L==6)
+		{
+		//Search(35.0,3.6,3.0,1.8);
+		}
+		else if(Choose_L==7)
+		{
+		//Search(35.0,3.6,3.0,1.8);
+		}
+		//Search(0.0,1.0,1.0,1.3);
+		//Search(0.0,1.2,3.0,1.4);
+		//Search(0.0,2.0,1.8,1.5);
+		//Search(35.0,2.8,3.0,1.6);
+		//Search(35.0,3.2,3.0,1.7);
+		//Search(35.0,3.6,3.0,1.8);
+	}
+	//***************************UART�ǭ�***********************************//
+	else if(Choose_R==3)
+	{
+		if(Choose_L==1)
+		{
+			Menu_F=4;
+		}
+	}
+	//***************************衝刺***************************************//
+	else if(Choose_R==4)
+	{
+// 	Sprint(W_S,KP,KD,BF,R10,R15,R20,R25,R30,R35,R40,R50,R60,R70,R80,R90,R100,R200,R300,R500);
+		if(Choose_L==1)
+		{
+			Sprint(40.0,2.2,1.8,1.0,1.5,1.6,1.7,1.8,2.0,2.2,2.4,2.6,2.8,3.0,3.2,3.4,3.6,3.8,4.0,4.5);
+//		Sprint(W_S, KP, KD, BF,R10,R15,R20,R25,R30,R35,R40,R50,R60,R70,R80,R90,R100,R200,R300,R500);
+		}
+		else if(Choose_L==2)
+		{
+			
+			Sprint(45.0,2.8,3.6,1.0,1.7,1.9,2.0,2.0,2.0,2.2,2.4,2.6,2.8,3.0,3.2,3.4,3.6,3.8,4.0,4.5);
+//		Sprint(W_S, KP, KD, BF,R10,R15,R20,R25,R30,R35,R40,R50,R60,R70,R80,R90,R100,R200,R300,R500);
+		}
+		else if(Choose_L==3)
+		{
+			Sprint(48.0,2.8,3.7,1.05,1.8,2.0,2.2,2.2,2.2,2.2,2.4,2.6,2.8,3.2,3.4,3.6,3.8,4.2,4.5,4.5);
+//		Sprint(W_S, KP, KD, BF,R10,R15,R20,R25,R30,R35,R40,R50,R60,R70,R80,R90,R100,R200,R300,R500);
+		}
+		else if(Choose_L==4)
+		{
+			Sprint(50.0,2.9,3.7,1.05,1.85,2.2,2.4,2.4,2.4,2.5,2.6,2.8,2.8,3.2,3.4,3.6,3.8,4.2,4.5,4.8);
+//		Sprint(W_S, KP, KD, BF,R10,R15,R20,R25,R30,R35,R40,R50,R60,R70,R80,R90,R100,R200,R300,R500); //
+		}
+		else if(Choose_L==5)
+		{
+			Sprint(52.0,2.95,3.72,1.05,1.85,2.4,2.5,2.6,2.7,2.7,2.8,2.8,3.2,3.4,3.6,3.8,4.0,4.2,4.5,4.8);
+//		Sprint(W_S, KP, KD, BF,R10,R15,R20,R25,R30,R35,R40,R50,R60,R70,R80,R90,R100,R200,R300,R500); //
+		}
+		else if(Choose_L==6)
+		{
+			Sprint(55.0,3.0,3.7,1.05,2.0,2.4,2.7,2.8,3.0,3.2,3.4,3.6,3.8,4.0,4.0,4.1,4.2,4.5,4.8,5.0);
+//		Sprint(W_S, KP, KD, BF,R10,R15,R20,R25,R30,R35,R40,R50,R60,R70,R80,R90,R100,R200,R300,R500);
+		}
+		else if(Choose_L==7)
+		{
+			Sprint(56.0,3.1,3.8,1.1,2.1,2.4,2.7,2.8,3.0,3.2,3.4,3.6,3.8,4.0,4.0,4.1,4.2,4.5,4.8,5.0);
+//		Sprint(W_S, KP, KD, BF,R10,R15,R20,R25,R30,R35,R40,R50,R60,R70,R80,R90,R100,R200,R300,R500);
+		}	
+		//
+	}
+	//***************************吸地(單純吸地)***************************************//	
+	else if(Choose_R==5)
+	{
+		if(Choose_L==1)
+		{
+			Wind_MOTER(50);
+		}
+	}
+}
+
+/*----------------------�򥻥\��---------------------------*/
+void Init_RCC(void)
+{
+   /* RCC system reset(for debug purpose) */
+  RCC_DeInit();
+
+  /* Enable HSE */
+  RCC_HSEConfig(RCC_HSE_ON);
+
+  /* Wait till HSE is ready */
+  HSEStartUpStatus = RCC_WaitForHSEStartUp();
+
+  if(HSEStartUpStatus == SUCCESS)
+  {
+    /* Enable Prefetch Buffer */
+    FLASH_PrefetchBufferCmd(FLASH_PrefetchBuffer_Enable);
+
+    /* Flash 2 wait state */
+    FLASH_SetLatency(FLASH_Latency_2);
+ 
+    /* HCLK = SYSCLK */
+    RCC_HCLKConfig(RCC_SYSCLK_Div1); 
+  
+    /* PCLK2 = HCLK */
+    RCC_PCLK2Config(RCC_HCLK_Div1); 
+
+    /* PCLK1 = HCLK/2 */
+    RCC_PCLK1Config(RCC_HCLK_Div2);
+
+    /* ADC72MHz */
+		RCC_ADCCLKConfig(RCC_PCLK2_Div6);
+		
+    /* PLLCLK = 8MHz * 9 = 72 MHz */
+    RCC_PLLConfig(RCC_PLLSource_HSE_Div1, RCC_PLLMul_9);
+
+    /* Enable PLL */ 
+    RCC_PLLCmd(ENABLE);
+
+    /* Wait till PLL is ready */
+    while(RCC_GetFlagStatus(RCC_FLAG_PLLRDY) == RESET)
+    {}
+
+    /* Select PLL as system clock source */
+    RCC_SYSCLKConfig(RCC_SYSCLKSource_PLLCLK);
+
+    /* Wait till PLL is used as system clock source */
+    while(RCC_GetSYSCLKSource() != 0x08)
+    {}
+  }
+	
+  RCC_APB2PeriphClockCmd(	RCC_APB2Periph_GPIOA |
+													RCC_APB2Periph_GPIOB |
+													RCC_APB2Periph_GPIOC |
+													RCC_APB2Periph_GPIOD |
+													RCC_APB2Periph_AFIO, ENABLE);
+	
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);				//ADC
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_TIM1,ENABLE);					//PWM_R
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2,ENABLE);					//TIMER
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3,ENABLE);					//ENCODER_L	
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4,ENABLE);					//ENCODER_R
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM5,ENABLE);					//BUZZER
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_TIM8,ENABLE);					//PWM_L
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_UART4,ENABLE);				//UART4
+}
+
+void Init_NVIC(void)
+{
+#ifdef  VECT_TAB_RAM
+  /* Set the Vector Table base location at 0x20000000 */ 
+	NVIC_SetVectorTable(NVIC_VectTab_RAM, 0x0); 
+#else  /* VECT_TAB_FLASH  */
+  /* Set the Vector Table base location at 0x08000000 */ 
+	NVIC_SetVectorTable(NVIC_VectTab_FLASH, 0x0);   
+#endif
+	//Timer
+	NVIC_InitStructure.NVIC_IRQChannel=TIM2_IRQn;
+	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
+	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+	NVIC_Init(&NVIC_InitStructure);
+}
+
+void Init_GPIO(void)
+{
+	//LED_RGB
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_0 | GPIO_Pin_1 | GPIO_Pin_5;				//L_G PB0 | L_B	PB1	|	R_B	PB5
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+  GPIO_Init(GPIOB, &GPIO_InitStructure);
+	
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_5 | GPIO_Pin_12;										//L_R	PC5	|	R_R	PC12
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+  GPIO_Init(GPIOC, &GPIO_InitStructure);
+	
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_2;																	//R_G	PD2
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+  GPIO_Init(GPIOD, &GPIO_InitStructure);
+	
+  //BUZZER
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_0;																	//BUZ	PA0
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+  GPIO_Init(GPIOA, &GPIO_InitStructure);
+	
+	//ADC����
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_1 | GPIO_Pin_2;																//AD5 PA1 | AD6 PA2
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AIN;
+  GPIO_Init(GPIOA, &GPIO_InitStructure);
+	
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_0 | GPIO_Pin_1 | GPIO_Pin_2 | GPIO_Pin_3;			//AD1 PC0 | AD2 PC1 | AD3 PC2 | AD4 PC3
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AIN;
+  GPIO_Init(GPIOC, &GPIO_InitStructure);
+	
+	//ADC�o�g
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_5;													//IR1 PA5
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+  GPIO_Init(GPIOA, &GPIO_InitStructure);
+
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_8;													//IR2 PB8
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+  GPIO_Init(GPIOB, &GPIO_InitStructure);
+	
+	//UART
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10;												//UART_TX	PC10
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+  GPIO_Init(GPIOC, &GPIO_InitStructure);
+
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_11;												//UART_RX	PC11
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
+  GPIO_Init(GPIOC, &GPIO_InitStructure);
+	
+	//PWM
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_7 | GPIO_Pin_8;						//L PC7	|	R	PC8 PWM
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+  GPIO_Init(GPIOC, &GPIO_InitStructure);
+
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6 | GPIO_Pin_9;						//L PC6	|	R	PC9 I/O
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+  GPIO_Init(GPIOC, &GPIO_InitStructure);
+	
+	//QEI
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6 | GPIO_Pin_7;						//L_A	PA6	|	L_B	PA7
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING; 
+  GPIO_Init(GPIOA, &GPIO_InitStructure);
+	
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6 | GPIO_Pin_7;						//R_A	PB6	|	R_B	PB7
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING; 
+  GPIO_Init(GPIOB, &GPIO_InitStructure);
+	
+	//����PWM
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_8;													//M PA8 PWM
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+  GPIO_Init(GPIOA, &GPIO_InitStructure);
+}
+
+void Init_Systick(void)
+{
+	SysTick_Config(72000);
+}
+
+void Init_TIMER2(void)
+{
+  TIM_TimeBaseStructure.TIM_Period = 719;
+  TIM_TimeBaseStructure.TIM_Prescaler = 1;
+  TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+  TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure);
+  TIM_ITConfig(TIM2, TIM_IT_Update, ENABLE);
+	TIM_Cmd(TIM2, ENABLE);
+}
+
+void Init_UART(void)
+{
+  USART_InitStructure.USART_BaudRate = 115200;
+  USART_InitStructure.USART_WordLength = USART_WordLength_8b;
+  USART_InitStructure.USART_StopBits = USART_StopBits_1;
+  USART_InitStructure.USART_Parity = USART_Parity_No;
+  USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+  USART_InitStructure.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
+
+  USART_Init(UART4, &USART_InitStructure); // ��l�� UART4
+
+  USART_Cmd(UART4, ENABLE); // �ҥ� USART4
+}
+
+void Uart_Num(unsigned long Value)
+{
+	unsigned long Num;
+	Num = (Value/100000)%10+48;
+	Uart_Sent(Num);
+	Num = (Value/10000)%10+48;
+	Uart_Sent(Num);
+	Num = (Value/1000)%10+48;
+	Uart_Sent(Num);
+	Num = (Value/100)%10+48;
+	Uart_Sent(Num);
+	Num = (Value/10)%10+48;
+	Uart_Sent(Num);
+	Num = (Value)%10+48;
+	Uart_Sent(Num);
+
+	USART_SendData(UART4,(char)'\t');
+	while (USART_GetFlagStatus(UART4, USART_FLAG_TC) == RESET);		
+}
+
+void Uart_Sent(unsigned long num)
+{
+	unsigned long Sent;
+	Sent=num;
+	USART_SendData(UART4,Sent);
+	while (USART_GetFlagStatus(UART4, USART_FLAG_TC) == RESET);
+}
+
+void Init_ADC(void)
+{
+	ADC_DeInit(ADC1);
+	
+	ADC_InitStructure.ADC_Mode = ADC_Mode_Independent;
+  ADC_InitStructure.ADC_ScanConvMode = DISABLE;
+  ADC_InitStructure.ADC_ContinuousConvMode = DISABLE;
+  ADC_InitStructure.ADC_ExternalTrigConv = ADC_ExternalTrigConv_None;
+  ADC_InitStructure.ADC_DataAlign = ADC_DataAlign_Right;
+  ADC_InitStructure.ADC_NbrOfChannel = 1;
+  ADC_Init(ADC1, &ADC_InitStructure);
+  
+  /* Enable ADC1 */
+  ADC_Cmd(ADC1, ENABLE);
+  /* Enable ADC1 reset calibaration register */   
+  ADC_ResetCalibration(ADC1);
+  /* Check the end of ADC1 reset calibration register */
+  while(ADC_GetResetCalibrationStatus(ADC1));
+  /* Start ADC1 calibaration */
+  ADC_StartCalibration(ADC1);
+  /* Check the end of ADC1 calibration */
+  while(ADC_GetCalibrationStatus(ADC1));
+}
+
+void Init_BUZZER(void)
+{
+	TIM_TimeBaseStructure.TIM_Period = (36000000/2)/Do-1;
+	TIM_TimeBaseStructure.TIM_Prescaler = 3;
+  TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+  TIM_TimeBaseStructure.TIM_RepetitionCounter = 0;
+  TIM_TimeBaseInit(TIM5, &TIM_TimeBaseStructure);
+
+  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
+  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+  TIM_OCInitStructure.TIM_OCPolarity =TIM_OCPolarity_High;
+  TIM_OCInitStructure.TIM_OCIdleState = TIM_OCIdleState_Set;
+  TIM_OC1Init(TIM5, &TIM_OCInitStructure);
+	
+  TIM_Cmd(TIM5, ENABLE);
+}
+
+void BUZZER(void)
+{
+	if(Buzzer_F==0)
+	{
+		TIM_Cmd(TIM5, DISABLE);
+	}
+	else if(Buzzer_F==1)
+	{
+		TIM5->ARR = (int)(36000000/2)/So-1;
+		TIM5->CCR1 = (int)(TIM5->ARR*0.5);
+		TIM_Cmd(TIM5, ENABLE);		
+		Buzzer_F = 2;
+	}
+	else if(Buzzer_F==2)
+	{
+		Buzzer_Time++;
+		if( Buzzer_Time >= 50 )
+		{
+			TIM5->CCR1 = 0;
+			Buzzer_Time = 0;
+			Buzzer_F = 0;
+		}
+	}
+}
+
+void Init_PWM(void)
+{
+  TIM_TimeBaseStructure.TIM_Period = 3599;
+  TIM_TimeBaseStructure.TIM_Prescaler = 0;	  	
+  TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+  TIM_TimeBaseStructure.TIM_RepetitionCounter = 0;
+  TIM_TimeBaseInit(TIM8, &TIM_TimeBaseStructure);
+
+  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
+  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+  TIM_OCInitStructure.TIM_OCPolarity =TIM_OCPolarity_High;
+  TIM_OCInitStructure.TIM_OCIdleState = TIM_OCIdleState_Set;
+  TIM_OC2Init(TIM8, &TIM_OCInitStructure);				   		    	//TIM_8_Channel_2 	(L)
+  TIM_OC3Init(TIM8, &TIM_OCInitStructure);				   	 		   	//TIM_8_Channel_3 	(R)
+  /* TIM8 counter enable */
+  TIM_Cmd(TIM8, ENABLE);
+  /* TIM8 Main Output Enable */
+  TIM_CtrlPWMOutputs(TIM8, ENABLE);
+	
+  TIM8->CCR2 = 0;							//PC7
+  TIM8->CCR3 = 0;							//PC8
+}
+
+void MOTOR_Control(void)
+{
+	PWM_L = Vc_PD_Command-W_PD_Command;
+	PWM_R = Vc_PD_Command+W_PD_Command;
+	
+	if(PWM_L > 3599)
+	{
+		PWM_R = PWM_R - (PWM_L - 3599);
+		PWM_L = 3599;
+	}
+
+	if(PWM_R > 3599)
+	{
+		PWM_L = PWM_L - (PWM_R - 3599);
+		PWM_R = 3599;
+	}
+
+	if(PWM_L>=3599)	PWM_L=3599;
+	else if(PWM_L<=-3599)	PWM_L=-3599;
+	if(PWM_R>=3599)	PWM_R=3599;
+	else if(PWM_R<=-3599)	PWM_R=-3599;
+	
+	if(PWM_L>=0)
+	{
+		GPIO_ResetBits(GPIOC,GPIO_Pin_6);
+	}
+	else
+	{
+		GPIO_SetBits(GPIOC,GPIO_Pin_6);
+		PWM_L = (3599 + PWM_L);
+	}
+	
+	if(PWM_R>=0)
+	{
+		GPIO_ResetBits(GPIOC,GPIO_Pin_9);	
+	}
+	else
+	{
+		GPIO_SetBits(GPIOC,GPIO_Pin_9);
+		PWM_R = ( 3599 + PWM_R );
+	}
+	
+  TIM8->CCR2 = PWM_L;							//PC7
+  TIM8->CCR3 = PWM_R;							//PC8
+}
+
+void Init_QEI(void)
+{
+	TIM_TimeBaseStructure.TIM_Period =0xffff;						   //QEI_L
+	TIM_TimeBaseStructure.TIM_Prescaler = 0 ;
+	TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
+	TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+	TIM_TimeBaseInit(TIM3, &TIM_TimeBaseStructure);	
+	TIM_EncoderInterfaceConfig(TIM3,TIM_EncoderMode_TI12,TIM_ICPolarity_Rising,TIM_ICPolarity_Rising);
+
+	TIM_Cmd(TIM3, ENABLE);
+	
+	TIM_TimeBaseStructure.TIM_Period =0xffff;						   //QEI_R
+	TIM_TimeBaseStructure.TIM_Prescaler = 0 ;
+	TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
+	TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+	TIM_TimeBaseInit(TIM4, &TIM_TimeBaseStructure);	
+	TIM_EncoderInterfaceConfig(TIM4,TIM_EncoderMode_TI12,TIM_ICPolarity_Rising,TIM_ICPolarity_Rising);
+
+	TIM_Cmd(TIM4, ENABLE);
+
+	TIM3->CNT = 0;
+	TIM4->CNT = 0;
+}
+
+void Encoder(void)
+{
+	E_L_now = TIM3->CNT;
+	E_R_now = TIM4->CNT;
+	
+	E_L_V = E_L_now-E_L_last;
+	E_R_V = E_R_now-E_R_last;
+	
+	E_L_last = E_L_now;
+	E_R_last = E_R_now;
+	
+	if(E_L_V > 32767)	E_L_V = E_L_V-65536;
+	else if(E_L_V < -32767)	E_L_V = E_L_V+65536;
+	if(E_R_V > 32767)	E_R_V = E_R_V-65536;
+	else if(E_R_V < -32767)	E_R_V = E_R_V+65536;
+	
+	E_L+=E_L_V;
+	E_R+=E_R_V;
+	
+	MAP_E_L+=E_L_V;
+	MAP_E_R+=E_R_V;
+}
+void Init_M_PWM(void)
+{
+  TIM_TimeBaseStructure.TIM_Period = 3599;
+  TIM_TimeBaseStructure.TIM_Prescaler = 0;	  	
+  TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+  TIM_TimeBaseStructure.TIM_RepetitionCounter = 0;
+  TIM_TimeBaseInit(TIM1, &TIM_TimeBaseStructure);
+
+  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
+  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+  TIM_OCInitStructure.TIM_OCPolarity =TIM_OCPolarity_High;
+  TIM_OCInitStructure.TIM_OCIdleState = TIM_OCIdleState_Set;
+  TIM_OC1Init(TIM1, &TIM_OCInitStructure);				   		    	//TIM_1_Channel_1 	(M)
+  /* TIM1 counter enable */
+  TIM_Cmd(TIM1, ENABLE);
+  /* TIM1 Main Output Enable */
+  TIM_CtrlPWMOutputs(TIM1, ENABLE);
+}
+void Wind_MOTER(int Value)
+{
+	PWM_M = (int)(Value*(3599/100));
+	if(PWM_M>3599)
+	{
+		PWM_M = 3599;
+	}
+	else if(PWM_M<0)
+	{
+		PWM_M = 0;
+	}
+	
+	TIM1->CCR1 =PWM_M;
+}
+/*----------------------�M��-------------------------------*/
+void Clear(void)
+{
+	//Encoder
+	E_L_V=0;
+	E_R_V=0;
+	E_L=0;
+	E_R=0;
+	MAP_E_L=0;
+	MAP_E_R=0;
+	//Move
+	V_encoder=0;
+	D_encoder=0;
+	W_encoder=0;
+	Sita_encoder=0;
+	//PD_Command
+	Vc=0;
+	Ws=0;
+	D_Command=0;
+	Sita_Command=0;
+	//PD_control
+	IR_late_x=0;
+	Vc_late_x=0;
+	W_late_x=0;
+	IR_PD=0;
+	IR_PD_Command=0;
+	Vc_PD_Command=0;
+	W_PD_Command=0;
+}
+
+
+/*----------------------���]�w---------------------------*/
+void Choose(void)
+{
+	if(E_L>=1000)
+	{
+		Buzzer_F=1;
+		Choose_L++;
+		E_L=0;
+		if(Choose_L>7)
+		{
+			Choose_L=0;
+		}
+	}
+	else if(E_L<=-1000)
+	{
+		Buzzer_F=1;
+		Choose_L--;
+		E_L=0;
+		if(Choose_L<0)
+		{
+			Choose_L=7;
+		}
+	}
+	
+	if(E_R>=1000)
+	{
+		Buzzer_F=1;
+		Choose_R++;
+		E_R=0;
+		if(Choose_R>5)
+		{
+			Choose_R=0;
+		}
+	}
+	else if(E_R<=-1000)
+	{
+		Buzzer_F=1;
+		Clear();
+		Menu_F=1;
+	}
+	
+	switch(Choose_L)
+	{
+		case 0:	
+						GPIO_SetBits(GPIOC,GPIO_Pin_5);		//L_R
+						GPIO_SetBits(GPIOB,GPIO_Pin_0);		//L_G
+						GPIO_SetBits(GPIOB,GPIO_Pin_1);		//L_B
+						break;
+		case 1:	
+						GPIO_ResetBits(GPIOC,GPIO_Pin_5);
+						GPIO_SetBits(GPIOB,GPIO_Pin_0);
+						GPIO_SetBits(GPIOB,GPIO_Pin_1);
+						break;
+		case 2:
+						GPIO_SetBits(GPIOC,GPIO_Pin_5);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_0);
+						GPIO_SetBits(GPIOB,GPIO_Pin_1);
+						break;
+		case 3:
+						GPIO_SetBits(GPIOC,GPIO_Pin_5);
+						GPIO_SetBits(GPIOB,GPIO_Pin_0);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_1);
+						break;
+		case 4:
+						GPIO_ResetBits(GPIOC,GPIO_Pin_5);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_0);
+						GPIO_SetBits(GPIOB,GPIO_Pin_1);
+						break;
+		case 5:
+						GPIO_ResetBits(GPIOC,GPIO_Pin_5);
+						GPIO_SetBits(GPIOB,GPIO_Pin_0);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_1);
+						break;
+		case 6:
+						GPIO_SetBits(GPIOC,GPIO_Pin_5);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_0);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_1);
+						break;
+		case 7:
+						GPIO_ResetBits(GPIOC,GPIO_Pin_5);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_0);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_1);
+						break;
+	}
+	switch(Choose_R)
+	{
+		case 0:
+						GPIO_SetBits(GPIOC,GPIO_Pin_12);	//R_R
+						GPIO_SetBits(GPIOD,GPIO_Pin_2);		//R_G
+						GPIO_SetBits(GPIOB,GPIO_Pin_5);		//R_B
+						break;
+		case 1:
+						GPIO_ResetBits(GPIOC,GPIO_Pin_12);
+						GPIO_SetBits(GPIOD,GPIO_Pin_2);
+						GPIO_SetBits(GPIOB,GPIO_Pin_5);
+						break;
+		case 2:
+						GPIO_SetBits(GPIOC,GPIO_Pin_12);
+						GPIO_ResetBits(GPIOD,GPIO_Pin_2);
+						GPIO_SetBits(GPIOB,GPIO_Pin_5);
+						break;
+		case 3:
+						GPIO_SetBits(GPIOC,GPIO_Pin_12);
+						GPIO_SetBits(GPIOD,GPIO_Pin_2);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_5);
+						break;
+		case 4:
+						GPIO_ResetBits(GPIOC,GPIO_Pin_12);
+						GPIO_ResetBits(GPIOD,GPIO_Pin_2);
+						GPIO_SetBits(GPIOB,GPIO_Pin_5);
+						break;
+		case 5:
+						GPIO_ResetBits(GPIOC,GPIO_Pin_12);
+						GPIO_SetBits(GPIOD,GPIO_Pin_2);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_5);
+						break;
+		case 6:
+						GPIO_SetBits(GPIOC,GPIO_Pin_12);
+						GPIO_ResetBits(GPIOD,GPIO_Pin_2);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_5);
+						break;
+		case 7:
+						GPIO_ResetBits(GPIOC,GPIO_Pin_12);
+						GPIO_ResetBits(GPIOD,GPIO_Pin_2);
+						GPIO_ResetBits(GPIOB,GPIO_Pin_5);
+						break;
+	}
+}
+
+/*----------------------���~�u-----------------------------*/
+void Catch_ADC(void)
+{	
+	if(mode==0)
+	{
+		time++;
+		if(time>=1000)
+		{
+			Buzzer_F=1;
+			time=0;
+			mode++;
+		}
+	}
+	else if(mode==1)
+	{
+		if(ADC_Save_F==0)
+		{
+			IR_ADC_MAX[IR_0]=0;
+			IR_ADC_MAX[IR_1]=0;
+			IR_ADC_MAX[IR_2]=0;
+			IR_ADC_MAX[IR_3]=0;
+			IR_ADC_MAX[IR_4]=0;
+			IR_ADC_MAX[IR_5]=0;
+			IR_ADC_MIN[IR_0]=4095;
+			IR_ADC_MIN[IR_1]=4095;
+			IR_ADC_MIN[IR_2]=4095;
+			IR_ADC_MIN[IR_3]=4095;
+			IR_ADC_MIN[IR_4]=4095;
+			IR_ADC_MIN[IR_5]=4095;
+			ADC_Save_F=1;
+		}
+		else if(ADC_Save_F==1)
+		{
+			if(IR_ADC[IR_0]>IR_ADC_MAX[IR_0]){IR_ADC_MAX[IR_0]=IR_ADC[IR_0];}
+			else if(IR_ADC[IR_0]<IR_ADC_MIN[IR_0]){IR_ADC_MIN[IR_0]=IR_ADC[IR_0];}
+			if(IR_ADC[IR_1]>IR_ADC_MAX[IR_1]){IR_ADC_MAX[IR_1]=IR_ADC[IR_1];}
+			else if(IR_ADC[IR_1]<IR_ADC_MIN[IR_1]){IR_ADC_MIN[IR_1]=IR_ADC[IR_1];}
+			if(IR_ADC[IR_2]>IR_ADC_MAX[IR_2]){IR_ADC_MAX[IR_2]=IR_ADC[IR_2];}
+			else if(IR_ADC[IR_2]<IR_ADC_MIN[IR_2]){IR_ADC_MIN[IR_2]=IR_ADC[IR_2];}
+			if(IR_ADC[IR_3]>IR_ADC_MAX[IR_3]){IR_ADC_MAX[IR_3]=IR_ADC[IR_3];}
+			else if(IR_ADC[IR_3]<IR_ADC_MIN[IR_3]){IR_ADC_MIN[IR_3]=IR_ADC[IR_3];}
+			if(IR_ADC[IR_4]>IR_ADC_MAX[IR_4]){IR_ADC_MAX[IR_4]=IR_ADC[IR_4];}
+			else if(IR_ADC[IR_4]<IR_ADC_MIN[IR_4]){IR_ADC_MIN[IR_4]=IR_ADC[IR_4];}
+			if(IR_ADC[IR_5]>IR_ADC_MAX[IR_5]){IR_ADC_MAX[IR_5]=IR_ADC[IR_5];}
+			else if(IR_ADC[IR_5]<IR_ADC_MIN[IR_5]){IR_ADC_MIN[IR_5]=IR_ADC[IR_5];}
+			
+			if(IR_ADC_MAX[IR_0]>4095){IR_ADC_MAX[IR_0]=4095;}
+			else if(IR_ADC_MAX[IR_0]<0){IR_ADC_MAX[IR_0]=0;}
+			if(IR_ADC_MAX[IR_1]>4095){IR_ADC_MAX[IR_1]=4095;}
+			else if(IR_ADC_MAX[IR_1]<0){IR_ADC_MAX[IR_1]=0;}
+			if(IR_ADC_MAX[IR_2]>4095){IR_ADC_MAX[IR_2]=4095;}
+			else if(IR_ADC_MAX[IR_2]<0){IR_ADC_MAX[IR_2]=0;}
+			if(IR_ADC_MAX[IR_3]>4095){IR_ADC_MAX[IR_3]=4095;}
+			else if(IR_ADC_MAX[IR_3]<0){IR_ADC_MAX[IR_3]=0;}
+			if(IR_ADC_MAX[IR_4]>4095){IR_ADC_MAX[IR_4]=4095;}
+			else if(IR_ADC_MAX[IR_4]<0){IR_ADC_MAX[IR_4]=0;}
+			if(IR_ADC_MAX[IR_5]>4095){IR_ADC_MAX[IR_5]=4095;}
+			else if(IR_ADC_MAX[IR_5]<0){IR_ADC_MAX[IR_5]=0;}
+		}
+	}
+}
+void Aegulate_ADC(void)
+{
+	IR_ADC_A[IR_0] = (((Y_MAX-Y_MIN)/(IR_ADC_MAX[IR_0]-IR_ADC_MIN[IR_0]))*(IR_ADC[IR_0]-IR_ADC_MIN[IR_0]));
+	IR_ADC_A[IR_1] = (((Y_MAX-Y_MIN)/(IR_ADC_MAX[IR_1]-IR_ADC_MIN[IR_1]))*(IR_ADC[IR_1]-IR_ADC_MIN[IR_1]));
+	IR_ADC_A[IR_2] = (((Y_MAX-Y_MIN)/(IR_ADC_MAX[IR_2]-IR_ADC_MIN[IR_2]))*(IR_ADC[IR_2]-IR_ADC_MIN[IR_2]));
+	IR_ADC_A[IR_3] = (((Y_MAX-Y_MIN)/(IR_ADC_MAX[IR_3]-IR_ADC_MIN[IR_3]))*(IR_ADC[IR_3]-IR_ADC_MIN[IR_3]));
+	IR_ADC_A[IR_4] = (((Y_MAX-Y_MIN)/(IR_ADC_MAX[IR_4]-IR_ADC_MIN[IR_4]))*(IR_ADC[IR_4]-IR_ADC_MIN[IR_4]));
+	IR_ADC_A[IR_5] = (((Y_MAX-Y_MIN)/(IR_ADC_MAX[IR_5]-IR_ADC_MIN[IR_5]))*(IR_ADC[IR_5]-IR_ADC_MIN[IR_5]));
+	
+	if(IR_ADC_A[IR_0]>Y_MAX){IR_ADC_A[IR_0]=Y_MAX;}
+	else if(IR_ADC_A[IR_0]<Y_MIN){IR_ADC_A[IR_0]=Y_MIN;}
+	if(IR_ADC_A[IR_1]>Y_MAX){IR_ADC_A[IR_1]=Y_MAX;}
+	else if(IR_ADC_A[IR_1]<Y_MIN){IR_ADC_A[IR_1]=Y_MIN;}
+	if(IR_ADC_A[IR_2]>Y_MAX){IR_ADC_A[IR_2]=Y_MAX;}
+	else if(IR_ADC_A[IR_2]<Y_MIN){IR_ADC_A[IR_2]=Y_MIN;}
+	if(IR_ADC_A[IR_3]>Y_MAX){IR_ADC_A[IR_3]=Y_MAX;}
+	else if(IR_ADC_A[IR_3]<Y_MIN){IR_ADC_A[IR_3]=Y_MIN;}
+	if(IR_ADC_A[IR_4]>Y_MAX){IR_ADC_A[IR_4]=Y_MAX;}
+	else if(IR_ADC_A[IR_4]<Y_MIN){IR_ADC_A[IR_4]=Y_MIN;}
+	if(IR_ADC_A[IR_5]>Y_MAX){IR_ADC_A[IR_5]=Y_MAX;}
+	else if(IR_ADC_A[IR_5]<Y_MIN){IR_ADC_A[IR_5]=Y_MIN;}
+}
+void Power_weight(void)
+{
+	Deviation = (((-1.5)*IR_ADC_A[IR_1]+(-0.5)*IR_ADC_A[IR_2]+(0.5)*IR_ADC_A[IR_3]+(1.5)*IR_ADC_A[IR_4])/(IR_ADC_A[IR_1]+IR_ADC_A[IR_2]+IR_ADC_A[IR_3]+IR_ADC_A[IR_4]));
+	
+	if((IR_ADC_A[IR_1]>IR_ADC_A[IR_2])&&(IR_ADC_A[IR_1]>(3500))&&(IR_ADC_A[IR_2]<(350)))
+	{
+		Deviation=-1.4;
+	}
+	else if((IR_ADC_A[IR_4]>IR_ADC_A[IR_3])&&(IR_ADC_A[IR_4]>(3500))&&(IR_ADC_A[IR_3]<(350)))
+	{
+		Deviation=1.4;
+	}
+	
+	if(Deviation>1.4)
+	{
+		Deviation=1.4;
+	}
+	else if(Deviation<-1.4)
+	{
+		Deviation=-1.4;
+	}
+}
+/*----------------------���ʦ^��---------------------------*/
+void Move(void)
+{
+	//PD����
+	V_encoder=(E_R_V + E_L_V);
+	D_encoder+=(V_encoder/2);
+	W_encoder=(E_R_V - E_L_V);
+	Sita_encoder+=W_encoder;
+	//�M�u
+	if(Choose_R==2)
+	{
+		//�a�ϸ�T
+		Map_D+=(V_encoder/2);
+		if(RUN_Mark==1)
+		{	
+			Start_D+=(V_encoder/2);
+		}
+		Map_R=MAP_E_R-MAP_E_L;
+		if(Map_R<0)
+		{
+			Map_R=-Map_R;
+		}
+		if(Map_R>Map_R_Max)
+		{
+			Map_D_Mark=Map_D;
+			Map_R_Max=Map_R;
+		}
+	}
+	//�Ĩ뤽���ƧP�_
+	else if(Choose_R==4)
+	{
+		Sprint_D_encoder+=(V_encoder/2);
+	}
+}
+
+
+/*----------------------���FPD����-------------------------*/
+void IR_PD_Control(void)
+{
+	IR_encoder_p=(Center-(Deviation*100));
+	IR_encoder_d=(IR_encoder_p-IR_late_x);
+	IR_late_x=IR_encoder_p;
+	IR_PD_Command=(IR_encoder_p*IR_KP+IR_encoder_d*IR_KD);
+	IR_PD+=IR_PD_Command;
+}
+void Vc_Command(void)
+{
+	if(Vc<Vn)
+	{
+		if(Vc>=Vmin&&Vc<=Vmax)
+		{
+			//�ܥ[�t��
+			A_Change=((Vc-Vmin)*(Amin-Amax)/(Vmax-Vmin))+Amax;
+			if(A_Change<=Amin)
+			{
+				A_Change=Amin;
+			}
+			else if(A_Change>=Amax)
+			{
+				A_Change=Amax;
+			}
+			
+			Vc+=A_Change;
+		}
+		else
+		{
+			Vc+=Acc_add;
+		}
+		
+		if(Vc>=Vn)
+		{
+			Vc=Vn;
+		}
+	}
+	else if(Vc>Vn)
+	{
+		Vc-=A;
+		if(Vc<=Vn)
+		{
+			Vc=Vn;
+		}	
+	}
+	D_Command+=Vc;
+}
+
+void Vc_PD_Control(void)
+{
+	Vc_encoder_p=((D_Command*mm_pulse)-D_encoder);
+	Vc_encoder_d=(Vc_encoder_p-Vc_late_x);
+	Vc_late_x=Vc_encoder_p;
+	Vc_PD_Command=(Vc_encoder_p*Vc_KP+Vc_encoder_d*Vc_KD);
+}
+void W_Command(void)
+{
+	if(Ws<Wn)
+	{
+		Ws+=A;
+		if(Ws>=Wn)
+		{
+			Ws=Wn;
+		}
+	}
+	else if(Ws>Wn)
+	{
+		Ws-=A;
+		if(Ws<=Wn)
+		{
+			Ws=Wn;
+		}
+	}
+	Sita_Command+=Ws;
+}
+
+void W_PD_Control(void)
+{
+	W_encoder_p=(IR_PD-Sita_encoder);
+	W_encoder_d=(W_encoder_p-W_late_x);
+	W_late_x=W_encoder_p;
+	W_PD_Command=(W_encoder_p*W_KP+W_encoder_d*W_KD);
+}
+/*----------------------���p�P�_---------------------------*/
+void Safe(void)
+{
+	if(IR_ADC_A[IR_1]<(Y_MAX*0.15) && IR_ADC_A[IR_2]<(Y_MAX*0.15) && IR_ADC_A[IR_3]<(Y_MAX*0.15) && IR_ADC_A[IR_4]<(Y_MAX*0.15))
+	{
+		Safer_time++;
+		if(Safer_time>=SAFE_TIME)
+		{
+			GPIO_SetBits(GPIOC,GPIO_Pin_6);
+			GPIO_SetBits(GPIOC,GPIO_Pin_9);
+			TIM8->CCR2 = 3599;
+			TIM8->CCR3 = 3599;
+			Wind_MOTER(0);
+			Buzzer_F=1;
+			Clear();
+			Safer_time=0;
+			Safer_F=0;
+			mode=0;
+			Menu_F=0;
+		}
+	}
+	else
+	{
+		Safer_time=0;
+	}
+}
+void Cross(void)
+{
+	//�Q�r��		
+	if(S_f==1)
+	{
+		if((D_encoder*pulse_mm)>=(S_D+S_Distance))
+		{
+			S_D=0;
+			S_f=0;
+		}
+	}
+	else
+	{
+		if(IR_ADC_A[IR_1]>=(Y_MAX*0.3)&&IR_ADC_A[IR_2]>=(Y_MAX*0.3)&&IR_ADC_A[IR_3]>=(Y_MAX*0.3)&&IR_ADC_A[IR_4]>=(Y_MAX*0.3))
+		{
+//			Buzzer_F=1;
+			S_D=D_encoder*pulse_mm;
+			S_f=1;
+		}
+	}
+}
+void Start_Direction(void)
+{
+	if(Direction_f==0)
+	{
+		//���]
+		if(R_Point>=(Y_MAX*0.3))
+		{
+			Direction_R=1;
+		}
+		else if(Direction_R==1 && (R_Point<=(Y_MAX*0.25)))
+		{
+			Buzzer_F=1;
+			RUN_Mark++;
+			Direction_f=1;
+			Direction_R=0;
+		}
+		
+		//�϶]
+		/*
+		if(L_Point>=(Y_MAX*0.3))
+		{
+			Direction_L=1;
+		}
+		else if(Direction_L==1 && (L_Point<=(Y_MAX*0.25)))
+		{
+			Buzzer_F=1;
+			RUN_Mark++;
+			Direction_f=2;
+			Direction_L=0;
+		}
+		*/
+	}
+}
+/*----------------------�M�u-------------------------------*/
+void Search_MAP_Point(void)
+{
+		if(L_Point>=(Y_MAX*0.3))
+		{
+			MAP_f=1;
+		}
+		else if(MAP_f==1 && (L_Point<=(Y_MAX*0.25)))
+		{
+			Buzzer_F=1;
+			MAP_D[MAP_Mark]=(Map_D*pulse_mm);
+			if(Map_D*pulse_mm<300)
+			{
+				MAP_R[MAP_Mark]=(Map_D_Mark/(Map_R_Max/Width)/10);
+			}
+			else
+			{
+				MAP_R[MAP_Mark]=(Map_D/(Map_R/Width)/10);
+			}
+			MAP_E_R=0;
+			MAP_E_L=0;
+			Map_D=0;
+			Map_R=0;
+			Map_D_Mark=0;
+			Map_R_Max=0;
+			MAP_Mark++;
+			MAP_f=0;
+		}
+//���]
+	/*
+	if(Direction_f==1)
+	{
+		if(L_Point>=(Y_MAX*0.3))
+		{
+			MAP_f=1;
+		}
+		else if(MAP_f==1 && (L_Point<=(Y_MAX*0.25)))
+		{
+			Buzzer_F=1;
+			MAP_D[MAP_Mark]=(Map_D*pulse_mm);
+			if(Map_D*pulse_mm<300)
+			{
+				MAP_R[MAP_Mark]=(Map_D_Mark/(Map_R_Max/Width)/10);
+			}
+			else
+			{
+				MAP_R[MAP_Mark]=(Map_D/(Map_R/Width)/10);
+			}
+			MAP_E_R=0;
+			MAP_E_L=0;
+			Map_D=0;
+			Map_R=0;
+			Map_D_Mark=0;
+			Map_R_Max=0;
+			MAP_Mark++;
+			MAP_f=0;
+		}
+	}
+	*/
+//�϶]
+	/*
+	else if(Direction_f==2)
+	{
+		if(R_Point>=(Y_MAX*0.3))
+		{
+			MAP_f=1;
+		}
+		else if(MAP_f==1 && (R_Point<=(Y_MAX*0.25)))
+		{
+			Buzzer_F=1;
+			MAP_D[MAP_Mark]=(Map_D*pulse_mm);
+			if(Map_D*pulse_mm<300)
+			{
+				MAP_R[MAP_Mark]=(Map_D_Mark/(Map_R_Max/Width)/10);
+			}
+			else
+			{
+				MAP_R[MAP_Mark]=(Map_D/(Map_R/Width)/10);
+			}
+			MAP_E_R=0;
+			MAP_E_L=0;
+			Map_D=0;
+			Map_R=0;
+			Map_D_Mark=0;
+			Map_R_Max=0;
+			MAP_Mark++;
+			MAP_f=0;
+		}
+	}
+	*/
+}
+
+void Search_End_Point(void)
+{
+//���]
+		if(R_Point>=(Y_MAX*0.3))
+			{
+				RUN_f=1;
+			}
+			else if(RUN_f==1 && (R_Point<=(Y_MAX*0.25)))
+			{
+				Buzzer_F=1;
+				MAP_D[MAP_Mark]=(Map_D*pulse_mm+Parking_Distance);
+				MAP_R[MAP_Mark]=(Map_D/(Map_R/Width)/10);
+				MAP_E_R=0;
+				MAP_E_L=0;
+				Map_D=0;
+				Map_R=0;
+				End_D=D_encoder*pulse_mm;
+				RUN_Mark++;
+				RUN_f=0;
+			}		
+/*	
+	if(Direction_f==1)
+	{				
+			if(R_Point>=(Y_MAX*0.3))
+			{
+				RUN_f=1;
+			}
+			else if(RUN_f==1 && (R_Point<=(Y_MAX*0.25)))
+			{
+				Buzzer_F=1;
+				MAP_D[MAP_Mark]=(Map_D*pulse_mm+Parking_Distance);
+				MAP_R[MAP_Mark]=(Map_D/(Map_R/Width)/10);
+				MAP_E_R=0;
+				MAP_E_L=0;
+				Map_D=0;
+				Map_R=0;
+				End_D=D_encoder*pulse_mm;
+				RUN_Mark++;
+				RUN_f=0;
+			}		
+	}
+	*/
+//�϶]
+	/*
+	else if(Direction_f==2)
+	{		
+			if(L_Point>=(Y_MAX*0.3))
+			{
+				RUN_f=1;
+			}
+			else if(RUN_f==1 && (L_Point<=(Y_MAX*0.25)))
+			{
+				Buzzer_F=1;
+				MAP_D[MAP_Mark]=(Map_D*pulse_mm+Parking_Distance);
+				MAP_R[MAP_Mark]=(Map_D/(Map_R/Width)/10);
+				MAP_E_R=0;
+				MAP_E_L=0;
+				Map_D=0;
+				Map_R=0;
+				End_D=D_encoder*pulse_mm;
+				RUN_Mark++;
+				RUN_f=0;
+			}
+	}
+	*/
+}
+void Search(float Wind_Speed,float KP,float KD,float V)
+{
+	IR_KD=KD;
+	IR_KP=KP;
+	Aegulate_ADC();
+	Power_weight();
+	Move();
+	//�l�u�@��
+	if(mode==0)
+	{
+		Wind_MOTER(Wind_Speed);
+		time++;
+		if(time>=1000)
+		{
+			Vn=V;
+			time=0;
+			mode=1;
+		}
+	}
+	//�`�u
+	else if(mode==1)
+	{
+		//***************************��m���A*********************************//
+		//�_�I�e
+		if(RUN_Mark==0)
+		{
+			MAP_E_R=0;
+			MAP_E_L=0;
+			Start_D=0;
+			Map_D=0;
+			Map_R=0;
+			Map_D_Mark=0;
+			Map_R_Max=0;
+			MAP_Mark=0;
+			//�P�_��V
+			Start_Direction();
+		}
+		//�j�M���a
+		else if(RUN_Mark==1)
+		{
+			//�P�_�O�_�i�Q�r
+			Cross();
+			if(S_f==0)
+			{
+				//���ܲŸ�
+				Search_MAP_Point();
+				//���I�Ÿ�
+				/*
+				if((Start_D*pulse_mm)>=800)
+				{
+					
+				}	
+				*/				
+				Search_End_Point();	
+			}
+		}
+		//�i���I
+		else if(RUN_Mark==2)
+		{
+			//�����Z��
+			if((D_encoder*pulse_mm)>=((End_D+Parking_Distance)-((Vc*Vc)/(2*A))))
+			{
+				Vn=0.0;
+			}
+			//���@���^���Ҧ�
+			if(((D_encoder*pulse_mm)>=(End_D+Parking_Distance)) || Vc<=0.0)
+			{
+				time++;
+				if(time>=1000)
+				{
+					Wind_MOTER(0);
+					Buzzer_F=1;
+					Vc=0;
+					Clear();
+					RUN_Mark=0;
+					End_D=0;
+					mode=0;
+					time=0;
+					Menu_F=5;
+				}
+			}
+		}
+		//�t�שR�O&&�t��PD����
+		Vc_Command();
+		Vc_PD_Control();
+	}
+	//���t�שR�O&���t��PD����
+	IR_PD_Control();
+	W_PD_Control();
+	//���F����
+	MOTOR_Control();
+	//�O�@
+	Safe();
+}
+/*----------------------�Ĩ�-------------------------------*/
+void Sprint_Support_Point(void)
+{
+//���]
+	if(Direction_f==1)
+	{
+		if(L_Point>=(Y_MAX*0.3))
+		{
+			MAP_f=1;
+		}
+		else if(MAP_f==1 && (L_Point<=(Y_MAX*0.25)))
+		{
+			DE1=fabs(Sprint_D_encoder-(Total_D[Array-2]*mm_pulse));
+			DE2=fabs(Sprint_D_encoder-(Total_D[Array-1]*mm_pulse));
+			DE3=fabs(Sprint_D_encoder-(Total_D[Array]*mm_pulse));
+			
+			if((DE2<=DE1)&&(DE2<=DE3))
+			{
+				Sprint_D_encoder=Total_D[Array-1]*mm_pulse;
+			}
+			else if((DE1<=DE2)&&(DE1<=DE3))
+			{
+				Sprint_D_encoder=Total_D[Array-2]*mm_pulse;
+			}
+			else if((DE3<=DE1)&&(DE3<=DE2))
+			{
+				Sprint_D_encoder=Total_D[Array]*mm_pulse;
+			}
+			
+			MAP_E_R=0;
+			MAP_E_L=0;
+			Map_D=0;
+			Map_R=0;
+			
+			MAP_f=0;
+		}
+	}
+	
+//�϶]
+	else if(Direction_f==2)
+	{
+		if(R_Point>=(Y_MAX*0.3))
+		{
+			MAP_f=1;
+		}
+		else if(MAP_f==1 && (R_Point<=(Y_MAX*0.25)))
+		{
+			DE1=fabs(Sprint_D_encoder-(Total_D[Array-2]*mm_pulse));
+			DE2=fabs(Sprint_D_encoder-(Total_D[Array-1]*mm_pulse));
+			DE3=fabs(Sprint_D_encoder-(Total_D[Array]*mm_pulse));
+			
+			if((DE2<=DE1)&&(DE2<=DE3))
+			{
+				Sprint_D_encoder=Total_D[Array-1]*mm_pulse;
+			}
+			else if((DE1<=DE2)&&(DE1<=DE3))
+			{
+				Sprint_D_encoder=Total_D[Array-2]*mm_pulse;
+			}
+			else if((DE3<=DE1)&&(DE3<=DE2))
+			{
+				Sprint_D_encoder=Total_D[Array]*mm_pulse;
+			}
+			
+			MAP_E_R=0;
+			MAP_E_L=0;
+			Map_D=0;
+			Map_R=0;
+			
+			MAP_f=0;
+		}
+	}
+}
+
+void Sprint_End_Point(void)
+{
+//���]
+	if(Direction_f==1)
+	{
+		if(R_Point>=(Y_MAX*0.3))
+		{
+			RUN_f=1;
+		}
+		else if(RUN_f==1 && (R_Point<=(Y_MAX*0.25)))
+		{
+			Buzzer_F=1;
+			End_D=Sprint_D_encoder*pulse_mm;
+			RUN_Mark++;
+			RUN_f=0;
+		}
+	}
+//�϶]
+	else if(Direction_f==2)
+	{
+		if(L_Point>=(Y_MAX*0.3))
+		{
+			RUN_f=1;
+		}
+		else if(RUN_f==1 && (L_Point<=(Y_MAX*0.25)))
+		{
+			Buzzer_F=1;
+			End_D=Sprint_D_encoder*pulse_mm;
+			RUN_Mark++;
+			RUN_f=0;
+		}
+	}
+}
+
+void Sprint(float Wind_Speed,float KP,float KD,float BF,float R10,float R15,float R20,float R25,float R30,float R35,float R40,float R50,float R60,float R70,float R80,float R90,float R100,float R200,float R300,float R500)
+{
+	IR_KD=KD;
+	IR_KP=KP;
+	Aegulate_ADC();
+	Power_weight();
+	Move();
+	//�t�t
+	if(mode==0)
+	{
+		if(Array_up<=MAP_Mark)
+		{
+			if(MAP_R[Array_up]>=500)
+			{
+				Sprint_Array[Array_up]=R500;
+			}
+			else if(MAP_R[Array_up]>=300)
+			{
+				Sprint_Array[Array_up]=R300;
+			}
+			else if(MAP_R[Array_up]>=200)
+			{
+				Sprint_Array[Array_up]=R200;
+			}
+			else if(MAP_R[Array_up]>=100)
+			{
+				Sprint_Array[Array_up]=R100;
+			}
+			else if(MAP_R[Array_up]>=90)
+			{
+				Sprint_Array[Array_up]=R90;
+			}
+			else if(MAP_R[Array_up]>=80)
+			{
+				Sprint_Array[Array_up]=R80;
+			}
+			else if(MAP_R[Array_up]>=70)
+			{
+				Sprint_Array[Array_up]=R70;
+			}
+			else if(MAP_R[Array_up]>=60)
+			{
+				Sprint_Array[Array_up]=R60;
+			}
+			else if(MAP_R[Array_up]>=50)
+			{
+				Sprint_Array[Array_up]=R50;
+			}
+			else if(MAP_R[Array_up]>=40)
+			{
+				Sprint_Array[Array_up]=R40;
+			}
+			else if(MAP_R[Array_up]>=35)
+			{
+				Sprint_Array[Array_up]=R35;
+			}
+			else if(MAP_R[Array_up]>=30)
+			{
+				Sprint_Array[Array_up]=R30;
+			}
+			else if(MAP_R[Array_up]>=25)
+			{
+				Sprint_Array[Array_up]=R25;
+			}
+			else if(MAP_R[Array_up]>=20)
+			{
+				Sprint_Array[Array_up]=R20;
+			}
+			else if(MAP_R[Array_up]>=15)
+			{
+				Sprint_Array[Array_up]=R15;
+			}
+			else if(MAP_R[Array_up]>0)
+			{
+				Sprint_Array[Array_up]=R10;
+			}
+			else
+			{
+				Sprint_Array[Array_up]=0;
+			}
+			
+			if(MAP_D[Array_up]<95)
+			{
+				if(MAP_D[Array_up-1]<210)
+				{
+					if(R15>1.8)
+					{
+						Sprint_Array[Array_up-1]=R10;
+						Sprint_Array[Array_up]=R10;
+					}
+					else
+					{
+						Sprint_Array[Array_up-1]=R15;
+						Sprint_Array[Array_up]=R15;
+					}
+				}
+			}
+			
+			if(Sprint_Array[Array_up]<=R50)
+			{
+				if(MAP_D[Array_up-1]<200)
+				{
+					if(Sprint_Array[Array_up-1]>Sprint_Array[Array_up])
+					{
+						Sprint_Array[Array_up-1]=Sprint_Array[Array_up];
+					}
+				}
+			}
+			
+			Array_up++;
+		}
+		else
+		{
+			Array_up=0;
+			mode++;
+		}
+	}
+	//�u��
+	else if(mode==1)
+	{
+		if(Optimization_Start==0)
+		{
+			Array_up=MAP_Mark;
+			Optimization_Start=1;
+		}
+		else
+		{
+			if(Array_up>0)
+			{
+				if(Sprint_Array[Array_up]<Sprint_Array[Array_up-1])
+				{
+					Optimization_speed=sqrt((2*A*(MAP_D[Array_up-1]))+(Sprint_Array[Array_up]*Sprint_Array[Array_up]));
+					if(Optimization_speed>=Sprint_Array[Array_up-1])
+					{
+						Sprint_Array[Array_up-1]=Sprint_Array[Array_up-1];
+					}
+					else if(Optimization_speed<=Sprint_Array[Array_up])
+					{
+						Sprint_Array[Array_up-1]=Sprint_Array[Array_up];
+					}
+					else
+					{
+						Sprint_Array[Array_up-1]=Optimization_speed;
+					}
+					
+					Array_up--;
+				}
+				else
+				{
+					Array_up--;
+				}
+			}
+			else
+			{
+				Optimization_Start=0;
+				mode++;
+			}
+		}
+	}
+	//�l�u�@��
+	else if(mode==2)
+	{
+		Wind_MOTER(Wind_Speed);
+		time++;
+		if(time>=1000)
+		{
+			time=0;
+			mode++;
+		}
+	}
+	//�Ĩ�
+	else if(mode==3)
+	{
+		//***************************��m���A*********************************//
+		//�_�I�e
+		if(RUN_Mark==0)
+		{
+			Array=0;
+			Vn=Sprint_Array[Array];
+			Sprint_D_encoder=0;
+			//�P�_���϶]
+			Start_Direction();
+		}
+		//�Ĩ�
+		else if(RUN_Mark==1)
+		{
+			//�P�_�O�_�i�Q�r
+			Cross();
+			//���b�Q�r		
+			if(S_f==0)
+			{
+				//�ɤ�����
+				Sprint_Support_Point();
+				//�_�I���I�Ÿ�
+				Sprint_End_Point();
+			}
+			
+			//�����ƧP�_
+			if(Sprint_D_encoder>=(Total_D[Array]*mm_pulse))
+			{
+				Array++;
+
+				if(Sprint_Array[Array]>Sprint_Array[Array-1])
+				{
+					Delay_up_f=1;
+				}
+				else if(Sprint_Array[Array]==Sprint_Array[Array-1])
+				{
+					Vn=Sprint_Array[Array];
+				}
+			}
+			//���e��t
+			if(Sprint_Array[Array]>Sprint_Array[Array+1])
+			{
+				if(Sprint_D_encoder>=((Total_D[Array]-(60.0+(BF*(((Vc*Vc)-(Sprint_Array[Array+1]*Sprint_Array[Array+1]))/(2*A)))))*mm_pulse))//80.0
+				{
+					Vn=Sprint_Array[Array+1];
+					if(Sprint_Array[Array+1]>Sprint_Array[Array+2])
+					{
+						Early_down_f=1;
+					}
+					else
+					{
+						Early_down_f=0;
+					}
+					Delay_up_f=0;
+				}
+			}
+			if(Early_down_f==1)
+			{
+				if(Sprint_D_encoder>=((Total_D[Array+1]-(60.0+(BF*(((Vc*Vc)-(Sprint_Array[Array+2]*Sprint_Array[Array+2]))/(2*A)))))*mm_pulse))//80.0
+				{
+					Vn=Sprint_Array[Array+2];
+					Early_down_f=0;
+				}
+				else
+				{
+					Early_down_f=0;
+				}
+			}
+			//����[�t
+			if(Delay_up_f==1)
+			{
+				if(Sprint_D_encoder>=((Total_D[Array-1]+80.0)*mm_pulse))//100.0
+				{
+					Vn=Sprint_Array[Array];
+					Delay_up_f=0;
+				}
+			}
+		}
+		//�i���I
+		else if(RUN_Mark>=2)
+		{
+			if(Array >= (MAP_Mark-1))
+			{
+				if((Sprint_D_encoder*pulse_mm)>=((End_D+Parking_Distance)-((Vc*Vc)/(2*A))))
+				{
+					Vn=0.0;
+				}
+				if(((Sprint_D_encoder*pulse_mm)>=(End_D+Parking_Distance)) || V_encoder<=0.0)
+				{
+					time++;
+					if(time>=1000)
+					{
+						Wind_MOTER(0);
+						Buzzer_F=1;
+						Vc=0;
+						Clear();
+						RUN_Mark=0;
+						End_D=0;
+						mode=0;
+						time=0;
+						Menu_F=0;
+					}
+				}
+			}
+			else
+			{
+				RUN_Mark=1;
+			}
+		}
+		//�t�שR�O&&�t��PD����
+		Vc_Command();
+		Vc_PD_Control();
+	}
+	//���t�שR�O&���t��PD����
+	IR_PD_Control();
+	W_PD_Control();
+	//���F����
+	MOTOR_Control();
+	//�O�@
+	Safe();
+}
